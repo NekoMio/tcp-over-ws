@@ -4,7 +4,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let host = std::env::var("HOST").unwrap_or_default();
     let is_cross_compiling = target != host;
     let is_linux_host = host.contains("linux");
-    
+
     // Only use embedded protoc for Linux cross-compilation
     let use_embedded_protoc = is_cross_compiling && is_linux_host && cfg!(feature = "protobuf-src");
 
@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         println!("cargo:warning=Using system protoc");
     }
-    
+
     tonic_build::configure()
         .build_server(true)
         .build_client(true)
