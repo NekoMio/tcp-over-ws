@@ -38,18 +38,6 @@ tcp-over-ws-rust client grpc://your-server.com:8080 127.0.0.1:5200
 tcp-over-ws-rust client grpcs://your-server.com:8080 127.0.0.1:5200
 ```
 
-### 协议比较
-- **WebSocket**: 
-  - 轻量级，适合简单场景
-  - 基于HTTP/HTTPS协议
-  - 兼容性好，易于穿透防火墙
-  
-- **gRPC**:
-  - 基于HTTP/2，性能更好
-  - 内置负载均衡和服务发现
-  - 更好的错误处理和重试机制
-  - 支持双向流
-
 ## Performance Benchmarks
 
 Performance tests conducted using iPerf3 to measure throughput efficiency.
