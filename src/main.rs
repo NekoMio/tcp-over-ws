@@ -14,14 +14,14 @@ use std::{
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
     net::{TcpListener, TcpStream, UdpSocket},
-    sync::{RwLock, mpsc},
+    sync::{mpsc, RwLock},
     time::timeout,
 };
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_tungstenite::{
     accept_async, connect_async, tungstenite::protocol::Message, WebSocketStream,
 };
 use tonic::{transport::Server, Request, Response, Status, Streaming};
-use tokio_stream::wrappers::ReceiverStream;
 use tracing::{error, info, warn, Level};
 use trust_dns_resolver::{config::*, TokioAsyncResolver};
 use url::Url;
@@ -115,12 +115,12 @@ async fn run_server(listen_addr: String, target_addr: String, protocol: String) 
 
     match protocol.as_str() {
         "grpc" => run_grpc_server(listen_addr, target_addr).await,
-        "ws" | _ => run_ws_server(listen_addr, target_addr).await,
+        "ws" => run_ws_server(listen_addr, target_addr).await,
+        _ => run_ws_server(listen_addr, target_addr).await,
     }
 }
 
 async fn run_ws_server(listen_addr: String, target_addr: String) -> Result<()> {
-
     let listener = TcpListener::bind(&listen_addr)
         .await
         .context("Failed to bind server listener")?;
@@ -231,7 +231,9 @@ async fn handle_server_connection(
 async fn run_client(server_url: String, local_addr: String) -> Result<()> {
     if server_url.starts_with("grpc://") || server_url.starts_with("grpcs://") {
         // Convert grpc:// to http:// and grpcs:// to https:// for tonic
-        let grpc_url = server_url.replace("grpc://", "http://").replace("grpcs://", "https://");
+        let grpc_url = server_url
+            .replace("grpc://", "http://")
+            .replace("grpcs://", "https://");
         run_grpc_client(grpc_url, local_addr).await
     } else {
         run_ws_client(server_url, local_addr).await
@@ -611,7 +613,9 @@ async fn run_grpc_server(listen_addr: String, target_addr: String) -> Result<()>
     info!("gRPC server listening on {}", addr);
 
     Server::builder()
-        .add_service(tunnel::tunnel_service_server::TunnelServiceServer::new(tunnel_service))
+        .add_service(tunnel::tunnel_service_server::TunnelServiceServer::new(
+            tunnel_service,
+        ))
         .serve(addr)
         .await?;
 
@@ -637,9 +641,11 @@ impl tunnel::tunnel_service_server::TunnelService for TunnelServiceImpl {
         let (tx, rx) = mpsc::channel(1000);
 
         // Get initial message with UUID
-        let init_msg = stream.next().await
+        let init_msg = stream
+            .next()
+            .await
             .ok_or_else(|| Status::invalid_argument("Missing init message"))?
-            .map_err(|e| Status::internal(format!("Stream error: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Stream error: {e}")))?;
 
         let uuid = match init_msg.message_type {
             Some(tunnel::tunnel_message::MessageType::Init(init)) => init.uuid,
@@ -651,19 +657,25 @@ impl tunnel::tunnel_service_server::TunnelService for TunnelServiceImpl {
         // Register tunnel
         {
             let mut tunnels = self.tunnels.write().await;
-            tunnels.insert(uuid.clone(), TunnelInfo {
-                last_activity: Instant::now(),
-            });
+            tunnels.insert(
+                uuid.clone(),
+                TunnelInfo {
+                    last_activity: Instant::now(),
+                },
+            );
         }
 
         // Connect to target
-        let target_stream = TcpStream::connect(&*self.target_addr).await
-            .map_err(|e| Status::internal(format!("Failed to connect to target: {}", e)))?;
+        let target_stream = TcpStream::connect(&*self.target_addr)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to connect to target: {e}")))?;
 
         let tunnels_clone = self.tunnels.clone();
         let uuid_clone = uuid.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_grpc_tcp_proxy(uuid_clone, tunnels_clone, stream, tx, target_stream).await {
+            if let Err(e) =
+                handle_grpc_tcp_proxy(uuid_clone, tunnels_clone, stream, tx, target_stream).await
+            {
                 error!("gRPC TCP proxy error: {:?}", e);
             }
         });
@@ -679,9 +691,11 @@ impl tunnel::tunnel_service_server::TunnelService for TunnelServiceImpl {
         let (tx, rx) = mpsc::channel(1000);
 
         // Get initial message with UUID
-        let init_msg = stream.next().await
+        let init_msg = stream
+            .next()
+            .await
             .ok_or_else(|| Status::invalid_argument("Missing init message"))?
-            .map_err(|e| Status::internal(format!("Stream error: {}", e)))?;
+            .map_err(|e| Status::internal(format!("Stream error: {e}")))?;
 
         let uuid = match init_msg.message_type {
             Some(tunnel::tunnel_message::MessageType::Init(init)) => init.uuid,
@@ -693,21 +707,29 @@ impl tunnel::tunnel_service_server::TunnelService for TunnelServiceImpl {
         // Register tunnel
         {
             let mut tunnels = self.tunnels.write().await;
-            tunnels.insert(uuid.clone(), TunnelInfo {
-                last_activity: Instant::now(),
-            });
+            tunnels.insert(
+                uuid.clone(),
+                TunnelInfo {
+                    last_activity: Instant::now(),
+                },
+            );
         }
 
         // Bind local UDP socket and connect to target
-        let udp_socket = UdpSocket::bind("0.0.0.0:0").await
-            .map_err(|e| Status::internal(format!("Failed to bind UDP socket: {}", e)))?;
-        udp_socket.connect(&*self.target_addr).await
-            .map_err(|e| Status::internal(format!("Failed to connect to target: {}", e)))?;
+        let udp_socket = UdpSocket::bind("0.0.0.0:0")
+            .await
+            .map_err(|e| Status::internal(format!("Failed to bind UDP socket: {e}")))?;
+        udp_socket
+            .connect(&*self.target_addr)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to connect to target: {e}")))?;
 
         let tunnels_clone = self.tunnels.clone();
         let uuid_clone = uuid.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_grpc_udp_proxy(uuid_clone, tunnels_clone, stream, tx, udp_socket).await {
+            if let Err(e) =
+                handle_grpc_udp_proxy(uuid_clone, tunnels_clone, stream, tx, udp_socket).await
+            {
                 error!("gRPC UDP proxy error: {:?}", e);
             }
         });
@@ -800,7 +822,7 @@ async fn handle_grpc_tcp_proxy(
         message_type: Some(tunnel::tunnel_message::MessageType::Close(
             tunnel::CloseMessage {
                 reason: "Connection closed".to_string(),
-            }
+            },
         )),
     };
     grpc_sender.send(Ok(close_msg)).await.ok();
@@ -889,7 +911,7 @@ async fn handle_grpc_udp_proxy(
         message_type: Some(tunnel::tunnel_message::MessageType::Close(
             tunnel::CloseMessage {
                 reason: "Connection closed".to_string(),
-            }
+            },
         )),
     };
     grpc_sender.send(Ok(close_msg)).await.ok();
@@ -937,7 +959,9 @@ async fn run_grpc_client(server_url: String, local_addr: String) -> Result<()> {
     let local_addr_udp = local_addr.clone();
     tokio::spawn(async move {
         let uuid = format!("U-{}", Uuid::new_v4().simple());
-        if let Err(e) = handle_grpc_client_udp_connection(uuid, &local_addr_udp, server_url_udp).await {
+        if let Err(e) =
+            handle_grpc_client_udp_connection(uuid, &local_addr_udp, server_url_udp).await
+        {
             error!("gRPC client UDP handler failed catastrophically: {:?}", e);
         }
     });
@@ -956,7 +980,8 @@ async fn handle_grpc_client_tcp_connection(
     info!(uuid, "Attempting to connect to gRPC server...");
 
     let server_url_string = server_url.as_ref().clone();
-    let mut client = tunnel::tunnel_service_client::TunnelServiceClient::connect(server_url_string).await
+    let mut client = tunnel::tunnel_service_client::TunnelServiceClient::connect(server_url_string)
+        .await
         .context("Failed to connect to gRPC server")?;
 
     let (tx, rx) = mpsc::channel(1000);
@@ -968,7 +993,7 @@ async fn handle_grpc_client_tcp_connection(
             tunnel::InitMessage {
                 uuid: uuid.clone(),
                 protocol: "tcp".to_string(),
-            }
+            },
         )),
     };
     tx.send(init_msg).await?;
@@ -1044,7 +1069,8 @@ async fn handle_grpc_client_udp_connection(
     info!(uuid, "Listening for UDP packets on {}", local_addr);
 
     let server_url_string = server_url.as_ref().clone();
-    let mut client = tunnel::tunnel_service_client::TunnelServiceClient::connect(server_url_string).await
+    let mut client = tunnel::tunnel_service_client::TunnelServiceClient::connect(server_url_string)
+        .await
         .context("Failed to connect to gRPC server")?;
 
     let (tx, rx) = mpsc::channel(1000);
@@ -1056,7 +1082,7 @@ async fn handle_grpc_client_udp_connection(
             tunnel::InitMessage {
                 uuid: uuid.clone(),
                 protocol: "udp".to_string(),
-            }
+            },
         )),
     };
     tx.send(init_msg).await?;
