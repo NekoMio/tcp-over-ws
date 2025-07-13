@@ -79,7 +79,6 @@ jobs:
             which protoc && protoc --version
           elif [[ "${{ runner.os }}" == "Windows" ]]; then
             choco install protoc --force -y
-            refreshenv
             protoc --version || echo "protoc not found, will use embedded version"
           fi
         shell: bash
