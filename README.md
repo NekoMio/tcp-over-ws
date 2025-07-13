@@ -1,25 +1,54 @@
-# TCP over WebSocket Rust (tcp2ws-rs)
+# TCP over WebSocket/gRPC Rust (tcp2ws-rs)
 
 Inspired by the original [tcp-over-websocket](https://github.com/zanjie1999/tcp-over-websocket)
 
-This is a Rust implementation of TCP and UDP over WebSocket, allowing you to tunnel TCP and UDP traffic through WebSocket connections. It can be used for various purposes, such as bypassing firewalls or proxy servers.
+This is a Rust implementation of TCP and UDP over WebSocket and gRPC, allowing you to tunnel TCP and UDP traffic through WebSocket or gRPC connections. It can be used for various purposes, such as bypassing firewalls or proxy servers.
 
 Base code from Gemini 2.5 Pro, Optimized by Claude 4 Sonnet.
 
 ## Features
 - [x] TCP over WebSocket
 - [x] UDP over WebSocket
-
+- [x] TCP over gRPC (新增)
+- [x] UDP over gRPC (新增)
 
 ## Usage
+
+### WebSocket Mode (默认)
 #### Server
 ```bash
 tcp-over-ws-rust server 0.0.0.0:8080 127.0.0.1:5201
+# 或者显式指定WebSocket协议
+tcp-over-ws-rust server 0.0.0.0:8080 127.0.0.1:5201 --protocol ws
 ```
 #### Client
 ```bash
 tcp-over-ws-rust client ws://your-server.com:8080 127.0.0.1:5200
 ```
+
+### gRPC Mode (新增)
+#### Server
+```bash
+tcp-over-ws-rust server 0.0.0.0:8080 127.0.0.1:5201 --protocol grpc
+```
+#### Client
+```bash
+tcp-over-ws-rust client grpc://your-server.com:8080 127.0.0.1:5200
+# 对于HTTPS/TLS连接
+tcp-over-ws-rust client grpcs://your-server.com:8080 127.0.0.1:5200
+```
+
+### 协议比较
+- **WebSocket**: 
+  - 轻量级，适合简单场景
+  - 基于HTTP/HTTPS协议
+  - 兼容性好，易于穿透防火墙
+  
+- **gRPC**:
+  - 基于HTTP/2，性能更好
+  - 内置负载均衡和服务发现
+  - 更好的错误处理和重试机制
+  - 支持双向流
 
 ## Performance Benchmarks
 

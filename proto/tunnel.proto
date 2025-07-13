@@ -1,0 +1,41 @@
+syntax = "proto3";
+package tunnel;
+
+service TunnelService {
+  // TCP tunneling via bidirectional streaming
+  rpc TcpTunnel(stream TunnelMessage) returns (stream TunnelMessage);
+  
+  // UDP tunneling via bidirectional streaming
+  rpc UdpTunnel(stream TunnelMessage) returns (stream TunnelMessage);
+}
+
+message TunnelMessage {
+  oneof message_type {
+    InitMessage init = 1;
+    DataMessage data = 2;
+    CloseMessage close = 3;
+    PingMessage ping = 4;
+    PongMessage pong = 5;
+  }
+}
+
+message InitMessage {
+  string uuid = 1;
+  string protocol = 2; // "tcp" or "udp"
+}
+
+message DataMessage {
+  bytes payload = 1;
+}
+
+message CloseMessage {
+  string reason = 1;
+}
+
+message PingMessage {
+  int64 timestamp = 1;
+}
+
+message PongMessage {
+  int64 timestamp = 1;
+}
