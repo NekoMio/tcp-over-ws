@@ -3,6 +3,10 @@ name = "tcp-over-ws-rust"
 version = "0.2.0-rc"
 edition = "2021"
 
+[features]
+default = []
+protobuf-src = ["dep:protobuf-src"]
+
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.27.0"
@@ -21,6 +25,7 @@ tokio-stream = "0.1"
 
 [build-dependencies]
 tonic-build = "0.11"
+protobuf-src = { version = "1.1", optional = true }
 
 [profile.release]
 lto = true
