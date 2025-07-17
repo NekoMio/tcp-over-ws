@@ -1,10 +1,12 @@
 use anyhow::{anyhow, Context, Result};
 use bytes::{Bytes, BytesMut};
 use clap::Parser;
+use cookie::Cookie;
 use futures_util::{
     stream::{SplitSink, SplitStream},
     SinkExt, StreamExt,
 };
+use http::header::{HeaderValue, COOKIE};
 use std::{
     collections::HashMap,
     net::SocketAddr,
@@ -59,6 +61,9 @@ enum Commands {
         server_url: String,
         /// Local address to listen on (e.g., 127.0.0.1:3389)
         local_addr: String,
+        /// Cookies to send with WebSocket connection (format: name1=value1;name2=value2)
+        #[clap(long)]
+        cookies: Option<String>,
     },
     /// Run in server mode
     /// e.g., server 0.0.0.0:8080 192.168.1.10:3389
@@ -96,7 +101,8 @@ async fn main() -> Result<()> {
         Commands::Client {
             server_url,
             local_addr,
-        } => run_client(server_url, local_addr).await,
+            cookies,
+        } => run_client(server_url, local_addr, cookies).await,
         Commands::Server {
             listen_addr,
             target_addr,
@@ -226,9 +232,29 @@ async fn handle_server_connection(
     Ok(())
 }
 
+// --- Helper: Parse Cookies ---
+
+fn parse_cookies(cookies_str: &str) -> Result<Vec<Cookie<'static>>> {
+    let mut cookies = Vec::new();
+    for part in cookies_str.split(';') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        
+        if let Some((name, value)) = part.split_once('=') {
+            let cookie = Cookie::new(name.trim().to_string(), value.trim().to_string());
+            cookies.push(cookie);
+        } else {
+            return Err(anyhow!("Invalid cookie format: {}", part));
+        }
+    }
+    Ok(cookies)
+}
+
 // --- Client Implementation ---
 
-async fn run_client(server_url: String, local_addr: String) -> Result<()> {
+async fn run_client(server_url: String, local_addr: String, cookies: Option<String>) -> Result<()> {
     if server_url.starts_with("grpc://") || server_url.starts_with("grpcs://") {
         // Convert grpc:// to http:// and grpcs:// to https:// for tonic
         let grpc_url = server_url
@@ -236,34 +262,45 @@ async fn run_client(server_url: String, local_addr: String) -> Result<()> {
             .replace("grpcs://", "https://");
         run_grpc_client(grpc_url, local_addr).await
     } else {
-        run_ws_client(server_url, local_addr).await
+        run_ws_client(server_url, local_addr, cookies).await
     }
 }
 
-async fn run_ws_client(server_url: String, local_addr: String) -> Result<()> {
+async fn run_ws_client(server_url: String, local_addr: String, cookies: Option<String>) -> Result<()> {
     info!("Starting client mode...");
     info!("Connecting to WebSocket server: {}", server_url);
     info!("Listening for local connections on: {}", local_addr);
 
+    // Parse cookies if provided
+    let parsed_cookies = if let Some(cookies_str) = cookies {
+        info!("Using cookies: {}", cookies_str);
+        Some(parse_cookies(&cookies_str)?)
+    } else {
+        None
+    };
+
     // Perform DNS IP preference logic
     let server_url = Arc::new(find_best_server_ip(server_url).await?);
     let local_addr = Arc::new(local_addr);
+    let cookies_arc = Arc::new(parsed_cookies);
 
     // TCP Handler
     let tcp_listener = TcpListener::bind(&*local_addr)
         .await
         .context("Failed to bind local TCP listener")?;
     let server_url_tcp = server_url.clone();
+    let cookies_tcp = cookies_arc.clone();
     tokio::spawn(async move {
         loop {
             let (local_stream, addr) = tcp_listener.accept().await.unwrap();
             info!(peer = %addr, "Accepted new local TCP connection");
 
             let server_url_clone = server_url_tcp.clone();
+            let cookies_clone = cookies_tcp.clone();
             tokio::spawn(async move {
                 let uuid = format!("T-{}", Uuid::new_v4().simple());
                 if let Err(e) =
-                    handle_client_tcp_connection(uuid, local_stream, server_url_clone).await
+                    handle_client_tcp_connection(uuid, local_stream, server_url_clone, cookies_clone).await
                 {
                     warn!("Client TCP handler error: {:?}", e);
                 }
@@ -274,9 +311,10 @@ async fn run_ws_client(server_url: String, local_addr: String) -> Result<()> {
     // UDP Handler
     let server_url_udp = server_url.clone();
     let local_addr_udp = local_addr.clone();
+    let cookies_udp = cookies_arc.clone();
     tokio::spawn(async move {
         let uuid = format!("U-{}", Uuid::new_v4().simple());
-        if let Err(e) = handle_client_udp_connection(uuid, &local_addr_udp, server_url_udp).await {
+        if let Err(e) = handle_client_udp_connection(uuid, &local_addr_udp, server_url_udp, cookies_udp).await {
             error!("Client UDP handler failed catastrophically: {:?}", e);
         }
     });
@@ -287,16 +325,46 @@ async fn run_ws_client(server_url: String, local_addr: String) -> Result<()> {
     Ok(())
 }
 
+// --- Helper: Create WebSocket Request with Cookies ---
+
+async fn connect_with_cookies(
+    url: &str,
+    cookies: Option<&Vec<Cookie<'static>>>,
+) -> Result<(WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>, http::Response<Option<Vec<u8>>>)> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    
+    let mut request = url.into_client_request()?;
+    
+    if let Some(cookies) = cookies {
+        if !cookies.is_empty() {
+            let cookie_header = cookies
+                .iter()
+                .map(|c| format!("{}={}", c.name(), c.value()))
+                .collect::<Vec<_>>()
+                .join("; ");
+            
+            request.headers_mut().insert(
+                COOKIE,
+                HeaderValue::from_str(&cookie_header)
+                    .context("Invalid cookie header value")?
+            );
+            
+            info!("Added cookies to WebSocket request: {}", cookie_header);
+        }
+    }
+    
+    connect_async(request).await.context("Failed to connect to WebSocket server")
+}
+
 async fn handle_client_tcp_connection(
     uuid: String,
     local_stream: TcpStream,
     server_url: Arc<String>,
+    cookies: Arc<Option<Vec<Cookie<'static>>>>,
 ) -> Result<()> {
     info!(uuid, "Attempting to connect to WebSocket server...");
 
-    let (ws_stream, _) = connect_async(&**server_url)
-        .await
-        .context("Failed to connect to WebSocket server")?;
+    let (ws_stream, _) = connect_with_cookies(&server_url, cookies.as_ref().as_ref()).await?;
     let (mut ws_sender, ws_receiver) = ws_stream.split();
 
     // Send our UUID to the server to initiate the tunnel
@@ -318,6 +386,7 @@ async fn handle_client_udp_connection(
     uuid: String,
     local_addr: &str,
     server_url: Arc<String>,
+    cookies: Arc<Option<Vec<Cookie<'static>>>>,
 ) -> Result<()> {
     let local_socket = UdpSocket::bind(local_addr)
         .await
@@ -342,7 +411,7 @@ async fn handle_client_udp_connection(
                 // If this is the first packet, establish the WebSocket connection
                 if ws_sender_opt.is_none() {
                     info!(uuid, "First UDP packet received, connecting to WebSocket server...");
-                    match connect_async(&**server_url).await {
+                    match connect_with_cookies(&server_url, cookies.as_ref().as_ref()).await {
                         Ok((ws, _)) => {
                             let (sender, mut receiver) = ws.split();
                             ws_sender_opt = Some(sender);

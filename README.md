@@ -9,16 +9,16 @@ Base code from Gemini 2.5 Pro, Optimized by Claude 4 Sonnet.
 ## Features
 - [x] TCP over WebSocket
 - [x] UDP over WebSocket
-- [x] TCP over gRPC (新增)
-- [x] UDP over gRPC (新增)
+- [x] TCP over gRPC
+- [x] UDP over gRPC
+- [x] WebSocket Cookies Support
 
 ## Usage
 
-### WebSocket Mode (默认)
+### WebSocket Mode (Default)
 #### Server
 ```bash
 tcp-over-ws-rust server 0.0.0.0:8080 127.0.0.1:5201
-# 或者显式指定WebSocket协议
 tcp-over-ws-rust server 0.0.0.0:8080 127.0.0.1:5201 --protocol ws
 ```
 #### Client
@@ -26,7 +26,14 @@ tcp-over-ws-rust server 0.0.0.0:8080 127.0.0.1:5201 --protocol ws
 tcp-over-ws-rust client ws://your-server.com:8080 127.0.0.1:5200
 ```
 
-### gRPC Mode (新增)
+#### Client with Cookies
+```bash
+tcp-over-ws-rust client --cookies "session_id=abc123" ws://your-server.com:8080 127.0.0.1:5200
+
+tcp-over-ws-rust client --cookies "session_id=abc123;user_id=456;auth_token=xyz789" ws://your-server.com:8080 127.0.0.1:5200
+```
+
+### gRPC Mode
 #### Server
 ```bash
 tcp-over-ws-rust server 0.0.0.0:8080 127.0.0.1:5201 --protocol grpc
@@ -34,7 +41,7 @@ tcp-over-ws-rust server 0.0.0.0:8080 127.0.0.1:5201 --protocol grpc
 #### Client
 ```bash
 tcp-over-ws-rust client grpc://your-server.com:8080 127.0.0.1:5200
-# 对于HTTPS/TLS连接
+
 tcp-over-ws-rust client grpcs://your-server.com:8080 127.0.0.1:5200
 ```
 
