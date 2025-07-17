@@ -241,7 +241,7 @@ fn parse_cookies(cookies_str: &str) -> Result<Vec<Cookie<'static>>> {
         if part.is_empty() {
             continue;
         }
-        
+
         if let Some((name, value)) = part.split_once('=') {
             let cookie = Cookie::new(name.trim().to_string(), value.trim().to_string());
             cookies.push(cookie);
@@ -266,7 +266,11 @@ async fn run_client(server_url: String, local_addr: String, cookies: Option<Stri
     }
 }
 
-async fn run_ws_client(server_url: String, local_addr: String, cookies: Option<String>) -> Result<()> {
+async fn run_ws_client(
+    server_url: String,
+    local_addr: String,
+    cookies: Option<String>,
+) -> Result<()> {
     info!("Starting client mode...");
     info!("Connecting to WebSocket server: {}", server_url);
     info!("Listening for local connections on: {}", local_addr);
@@ -299,8 +303,13 @@ async fn run_ws_client(server_url: String, local_addr: String, cookies: Option<S
             let cookies_clone = cookies_tcp.clone();
             tokio::spawn(async move {
                 let uuid = format!("T-{}", Uuid::new_v4().simple());
-                if let Err(e) =
-                    handle_client_tcp_connection(uuid, local_stream, server_url_clone, cookies_clone).await
+                if let Err(e) = handle_client_tcp_connection(
+                    uuid,
+                    local_stream,
+                    server_url_clone,
+                    cookies_clone,
+                )
+                .await
                 {
                     warn!("Client TCP handler error: {:?}", e);
                 }
@@ -314,7 +323,9 @@ async fn run_ws_client(server_url: String, local_addr: String, cookies: Option<S
     let cookies_udp = cookies_arc.clone();
     tokio::spawn(async move {
         let uuid = format!("U-{}", Uuid::new_v4().simple());
-        if let Err(e) = handle_client_udp_connection(uuid, &local_addr_udp, server_url_udp, cookies_udp).await {
+        if let Err(e) =
+            handle_client_udp_connection(uuid, &local_addr_udp, server_url_udp, cookies_udp).await
+        {
             error!("Client UDP handler failed catastrophically: {:?}", e);
         }
     });
@@ -330,11 +341,14 @@ async fn run_ws_client(server_url: String, local_addr: String, cookies: Option<S
 async fn connect_with_cookies(
     url: &str,
     cookies: Option<&Vec<Cookie<'static>>>,
-) -> Result<(WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>, http::Response<Option<Vec<u8>>>)> {
+) -> Result<(
+    WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>,
+    http::Response<Option<Vec<u8>>>,
+)> {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-    
+
     let mut request = url.into_client_request()?;
-    
+
     if let Some(cookies) = cookies {
         if !cookies.is_empty() {
             let cookie_header = cookies
@@ -342,18 +356,19 @@ async fn connect_with_cookies(
                 .map(|c| format!("{}={}", c.name(), c.value()))
                 .collect::<Vec<_>>()
                 .join("; ");
-            
+
             request.headers_mut().insert(
                 COOKIE,
-                HeaderValue::from_str(&cookie_header)
-                    .context("Invalid cookie header value")?
+                HeaderValue::from_str(&cookie_header).context("Invalid cookie header value")?,
             );
-            
+
             info!("Added cookies to WebSocket request: {}", cookie_header);
         }
     }
-    
-    connect_async(request).await.context("Failed to connect to WebSocket server")
+
+    connect_async(request)
+        .await
+        .context("Failed to connect to WebSocket server")
 }
 
 async fn handle_client_tcp_connection(
